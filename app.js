@@ -4,31 +4,49 @@ const mysql = require("mysql2");
 const app = express();
 app.use(express.json());
 
-const db = mysql.createConnection({
-  host: "db",
-  user: "root",
-  password: "21-Feb-05",
-  database: "testdb"
-});
+let db;
 
-// Retry connection (your logic kept)
-function connectDB() {
-  db.connect((err) => {
+// ✅ Create connection pool (IMPORTANT)
+function createPool() {
+  return mysql.createPool({
+    host: "db",
+    user: "root",
+    password: "21-Feb-05",
+    database: "testdb",
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+  });
+}
+
+// ✅ Wait until DB is ready
+function connectWithRetry() {
+  db = createPool();
+
+  db.getConnection((err, connection) => {
     if (err) {
-      console.log("Waiting for MySQL...");
-      setTimeout(connectDB, 5000);
+      console.log("⏳ Waiting for MySQL...");
+      setTimeout(connectWithRetry, 5000);
     } else {
-      console.log("Connected to DB");
+      console.log("✅ Connected to MySQL");
+      connection.release();
+
+      // 🚀 Start server ONLY after DB is ready
+      app.listen(3000, () =>
+        console.log("🚀 Server running on port 3000")
+      );
     }
   });
 }
-connectDB();
+
+connectWithRetry();
 
 
-
+// ================= ROUTES ================= //
 
 app.post("/add", (req, res) => {
   const { name } = req.body;
+
   db.query(
     "INSERT INTO users (name) VALUES (?)",
     [name],
@@ -39,7 +57,6 @@ app.post("/add", (req, res) => {
   );
 });
 
-
 app.get("/users", (req, res) => {
   db.query("SELECT * FROM users", (err, result) => {
     if (err) return res.status(500).send(err);
@@ -47,15 +64,18 @@ app.get("/users", (req, res) => {
   });
 });
 
-
 app.get("/users/:id", (req, res) => {
   const { id } = req.params;
-  db.query("SELECT * FROM users WHERE id = ?", [id], (err, result) => {
-    if (err) return res.status(500).send(err);
-    res.send(result);
-  });
-});
 
+  db.query(
+    "SELECT * FROM users WHERE id = ?",
+    [id],
+    (err, result) => {
+      if (err) return res.status(500).send(err);
+      res.send(result);
+    }
+  );
+});
 
 app.put("/update/:id", (req, res) => {
   const { id } = req.params;
@@ -71,7 +91,6 @@ app.put("/update/:id", (req, res) => {
   );
 });
 
-
 app.delete("/delete/:id", (req, res) => {
   const { id } = req.params;
 
@@ -85,13 +104,8 @@ app.delete("/delete/:id", (req, res) => {
   );
 });
 
-
-
+// ✅ Metrics for Prometheus
 app.get("/metrics", (req, res) => {
   res.set("Content-Type", "text/plain");
   res.send("app_up 1\n");
 });
-
-
-
-app.listen(3000, () => console.log("Server running on port 3000"));
